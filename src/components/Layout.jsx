@@ -27,7 +27,7 @@ const Layout = () => {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Header>
+        {/* <Header>
           <button
             onClick={() => setSidebarOpen(true)}
             className="p-2 rounded-md text-gray-400 lg:hidden hover:bg-gray-100 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500"
@@ -35,7 +35,7 @@ const Layout = () => {
             <span className="sr-only">Open sidebar</span>
             <Menu className="h-6 w-6" />
           </button>
-        </Header>
+        </Header> */}
         
         <main className="flex-1 overflow-y-auto bg-gray-50 p-4">
           <div className="container mx-auto">

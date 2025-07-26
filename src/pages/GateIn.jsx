@@ -1,40 +1,67 @@
 import React, { useState, useEffect } from 'react';
 import { Filter, Search, Clock, CheckCircle } from 'lucide-react';
 import useAuthStore from '../store/authStore';
-import useDataStore from '../store/dataStore';
 import toast from 'react-hot-toast';
 
 const GateIn = () => {
   const { user } = useAuthStore();
-  const { getFilteredData, updateGateIn, addToGateIn } = useDataStore();
   const [activeTab, setActiveTab] = useState('pending');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterParty, setFilterParty] = useState('all');
-  const [selectedItems, setSelectedItems] = useState({});
   const [gateInTimes, setGateInTimes] = useState({});
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [currentItem, setCurrentItem] = useState(null);
+  const [pendingData, setPendingData] = useState([]);
+  const [historyData, setHistoryData] = useState([]);
+  const [uniqueParties, setUniqueParties] = useState([]);
+const [loading, setLoading] = useState(true);
 
-  const doData = getFilteredData('doData', user);
-  const gateInData = getFilteredData('gateInData', user);
+  const fetchData = async () => {
+     setLoading(true); // start loading
+    try {
+      const response = await fetch(
+        `https://script.google.com/macros/s/AKfycbyhWN2S6qnJm7RVQr5VpPfyKRxI8gks0xxgWh_reMVlpsWvLo0rfzvqVA34x2xkPsJm/exec?sheet=ORDER-INVOICE`
+      );
+      const json = await response.json();
 
-  // Initialize gate in data from DO data
-  useEffect(() => {
-    doData.forEach(doItem => {
-      const existsInGateIn = gateInData.find(gateItem => gateItem.id === doItem.id);
-      if (!existsInGateIn) {
-        addToGateIn(doItem);
+      if (json.success && Array.isArray(json.data)) {
+        // Process the data to match your requirements
+        const allData = json.data.slice(6).map((row, index) => ({
+          id: index + 1,
+          serialNumber: row[1], // Column A (assuming this is serial number)
+          partyName: row[2],    // Column C
+          erpDoNo: row[3],      // Column D
+          transporterName: row[4], // Column E
+          lrNumber: row[5],     // Column F
+          vehicleNumber: row[6], // Column G
+          deliveryTerm: row[7], // Column H
+          brandName: row[8],    // Column I
+          dispatchQty: row[9],   // Column J
+          planned1: row[10],     // Column K
+          actual1: row[11]       // Column L
+        }));
+
+        // Filter data based on your conditions
+        const pending = allData.filter(item =>
+          item.planned1 && !item.actual1
+        );
+        const history = allData.filter(item =>
+          item.planned1 && item.actual1
+        );
+
+        setPendingData(pending);
+        setHistoryData(history);
+        setUniqueParties([...new Set(allData.map(item => item.partyName))]);
       }
-    });
-  }, [doData]);
-
-  const pendingData = gateInData.filter(item => item.status === 'pending');
-  const historyData = gateInData.filter(item => item.status === 'completed');
-
-  const handleCheckboxChange = (id) => {
-    setSelectedItems(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      toast.error('Failed to load data');
+    }
   };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
 
   const handleGateInTimeChange = (id, dateTime) => {
     setGateInTimes(prev => ({
@@ -43,37 +70,150 @@ const GateIn = () => {
     }));
   };
 
-  const handleSubmitGateIn = (id) => {
-    const gateInDateTime = gateInTimes[id];
-    if (!gateInDateTime) {
-      toast.error('Please select gate in date and time');
-      return;
-    }
-    
-    updateGateIn(id, gateInDateTime);
-    toast.success('Gate in updated successfully!');
-    setSelectedItems(prev => ({ ...prev, [id]: false }));
-    setGateInTimes(prev => ({ ...prev, [id]: '' }));
+  const handleOpenModal = (item) => {
+    setCurrentItem(item);
+    setIsModalOpen(true);
   };
 
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setCurrentItem(null);
+  };
+
+const handleSubmitGateIn = async (id) => {
+  const gateInDateTime = gateInTimes[id];
+  if (!gateInDateTime) {
+    toast.error('Please select gate in date and time');
+    return;
+  }
+
+  const currentDateTime = new Date().toLocaleString('en-GB', {
+    timeZone: 'Asia/Kolkata',
+  });
+
+  try {
+    const response = await fetch(
+      'https://script.google.com/macros/s/AKfycbyhWN2S6qnJm7RVQr5VpPfyKRxI8gks0xxgWh_reMVlpsWvLo0rfzvqVA34x2xkPsJm/exec',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          sheetId: '1wbIPdsHBxTE7fnzgOiAxS4koFwNxzwdpgp59NRWsnoc',
+          sheetName: 'ORDER-INVOICE',
+          action: 'update',
+          rowIndex: (id + 6).toString(),
+          columnData: JSON.stringify({
+            L: currentDateTime,
+            N: gateInDateTime,
+          }),
+        }),
+      }
+    );
+
+    const result = await response.json();
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to update Google Sheet');
+    }
+
+    toast.success('Gate in updated successfully!');
+    fetchData();
+    handleCloseModal();
+  } catch (error) {
+    console.error('Error updating gate in:', error);
+    toast.error('Failed to update gate in');
+  }
+};
+
+
+
   const filteredPendingData = pendingData.filter(item => {
-    const matchesSearch = item.partyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         item.erpDoNo.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = item.partyName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.erpDoNo?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesParty = filterParty === 'all' || item.partyName === filterParty;
     return matchesSearch && matchesParty;
   });
 
   const filteredHistoryData = historyData.filter(item => {
-    const matchesSearch = item.partyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         item.erpDoNo.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = item.partyName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.erpDoNo?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesParty = filterParty === 'all' || item.partyName === filterParty;
     return matchesSearch && matchesParty;
   });
 
-  const uniqueParties = [...new Set(gateInData.map(item => item.partyName))];
-
   return (
     <div className="space-y-6">
+      {/* Modal */}
+      {isModalOpen && currentItem && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
+            <div className="bg-indigo-600 p-4 text-white">
+              <h2 className="text-xl font-bold">Gate In Details</h2>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">Serial No</label>
+                  <p className="mt-1 text-sm font-medium">{currentItem.serialNumber}</p>
+                </div>
+
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">Party Name</label>
+                  <p className="mt-1 text-sm font-medium">{currentItem.partyName}</p>
+                </div>
+
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">Transporter</label>
+                  <p className="mt-1 text-sm font-medium">{currentItem.transporterName}</p>
+                </div>
+
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">Delivery Term</label>
+                  <p className="mt-1 text-sm font-medium">{currentItem.deliveryTerm}</p>
+                </div>
+
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">Brand</label>
+                  <p className="mt-1 text-sm font-medium">{currentItem.brandName}</p>
+                </div>
+
+                <div className="bg-gray-50 p-3 rounded-lg">
+                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">Dispatch Qty</label>
+                  <p className="mt-1 text-sm font-medium">{currentItem.dispatchQty}</p>
+                </div>
+              </div>
+
+              <div className="pt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Gate In Date & Time</label>
+                <input
+                  type="datetime-local"
+                  value={gateInTimes[currentItem.id] || ''}
+                  onChange={(e) => handleGateInTimeChange(currentItem.id, e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+
+            <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-3">
+              <button
+                onClick={handleCloseModal}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleSubmitGateIn(currentItem.id)}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
+              >
+                Submit Gate In
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-800">Gate IN</h1>
       </div>
@@ -92,6 +232,7 @@ const GateIn = () => {
             <Search size={20} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
           </div>
         </div>
+
         <div className="flex items-center space-x-2">
           <Filter size={16} className="text-gray-500" />
           <select
@@ -109,25 +250,24 @@ const GateIn = () => {
 
       {/* Tabs */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
+       
         <div className="border-b border-gray-200">
           <nav className="flex -mb-px">
             <button
-              className={`py-4 px-6 font-medium text-sm border-b-2 ${
-                activeTab === 'pending'
-                  ? 'border-indigo-500 text-indigo-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
+              className={`py-4 px-6 font-medium text-sm border-b-2 ${activeTab === 'pending'
+                ? 'border-indigo-500 text-indigo-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
               onClick={() => setActiveTab('pending')}
             >
               <Clock size={16} className="inline mr-2" />
               Pending ({filteredPendingData.length})
             </button>
             <button
-              className={`py-4 px-6 font-medium text-sm border-b-2 ${
-                activeTab === 'history'
-                  ? 'border-indigo-500 text-indigo-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
+              className={`py-4 px-6 font-medium text-sm border-b-2 ${activeTab === 'history'
+                ? 'border-indigo-500 text-indigo-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
               onClick={() => setActiveTab('history')}
             >
               <CheckCircle size={16} className="inline mr-2" />
@@ -138,13 +278,14 @@ const GateIn = () => {
 
         {/* Tab Content */}
         <div className="p-6">
+          
           {activeTab === 'pending' && (
             <div className="overflow-x-auto">
+              
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Select</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Gate In Date&Time</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Serial Number</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Party Name</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ERP DO No.</th>
@@ -154,28 +295,18 @@ const GateIn = () => {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Delivery Term</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Brand Name</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dispatch Qty</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Action</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {filteredPendingData.map((item) => (
                     <tr key={item.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <input
-                          type="checkbox"
-                          checked={selectedItems[item.id] || false}
-                          onChange={() => handleCheckboxChange(item.id)}
-                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                        />
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <input
-                          type="datetime-local"
-                          value={gateInTimes[item.id] || ''}
-                          onChange={(e) => handleGateInTimeChange(item.id, e.target.value)}
-                          disabled={!selectedItems[item.id]}
-                          className="border border-gray-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100"
-                        />
+                        <button
+                          onClick={() => handleOpenModal(item)}
+                          className="px-3 py-1 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 text-sm"
+                        >
+                          Gate In
+                        </button>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.serialNumber}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.partyName}</td>
@@ -186,15 +317,6 @@ const GateIn = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.deliveryTerm}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.brandName}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.dispatchQty}</td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <button
-                          onClick={() => handleSubmitGateIn(item.id)}
-                          disabled={!selectedItems[item.id] || !gateInTimes[item.id]}
-                          className="px-3 py-1 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
-                        >
-                          Submit
-                        </button>
-                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -229,7 +351,7 @@ const GateIn = () => {
                     <tr key={item.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.serialNumber}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {item.gateInDateTime ? new Date(item.gateInDateTime).toLocaleString() : '-'}
+                        {item.actual1 ? new Date(item.actual1).toLocaleString() : '-'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.partyName}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{item.erpDoNo}</td>
@@ -245,12 +367,13 @@ const GateIn = () => {
               </table>
               {filteredHistoryData.length === 0 && (
                 <div className="px-6 py-12 text-center">
-                  <p className="text-gray-500">No gate in history found.</p>
+                  <p className="text-gray-500">No historical gate in records found.</p>
                 </div>
               )}
             </div>
           )}
         </div>
+        
       </div>
     </div>
   );
